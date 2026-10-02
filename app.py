@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data_loader import (
+    APP_DIR,
     DEFAULT_COMPANY_LIST,
     DEFAULT_DATA_ROOT,
     DEFAULT_OHLC_PATH,
@@ -88,7 +89,7 @@ with st.sidebar:
     )
     ohlc_path = st.text_input(
         "Optional OHLC CSV",
-        str(DEFAULT_OHLC_PATH),
+        str(default_data_path(DEFAULT_OHLC_PATH, DEFAULT_OHLC_PATH)),
         help="Long-format CSV with Date, Open, High, Low, Close and optional Company/Symbol.",
     )
     st.divider()
@@ -101,6 +102,10 @@ if universe.empty:
     st.error(
         "No company records could be loaded. Check the financials folder path and ensure it "
         "contains company subfolders with *_Basic_Info.csv files."
+    )
+    st.caption(
+        f"Resolved financials path: `{data_root}` · app directory: "
+        f"`{APP_DIR}`"
     )
     st.stop()
 

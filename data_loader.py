@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 
+APP_DIR = Path(__file__).resolve().parent
 LOCAL_SOURCE_DATA_ROOT = (
     Path(r"D:\Semester-5\DV")
     / "Detailed-Financials-Data-Of-4456-NSE-And-BSE-Company-20231230T233228Z-001"
@@ -20,22 +21,29 @@ LOCAL_SOURCE_DATA_ROOT = (
 LOCAL_COMPANY_LIST = Path(
     r"C:\Users\hp\.copilot\attachments\4e86504f-47ca-47aa-b12b-0b3fe7ff5e89-List-Of-All-Companies.csv"
 )
-DEFAULT_DATA_ROOT = Path("data/financials")
-DEFAULT_COMPANY_LIST = Path("data/company_list.csv")
-DEFAULT_OHLC_PATH = Path("data/ohlc.csv")
+DEFAULT_DATA_ROOT = APP_DIR / "data" / "financials"
+DEFAULT_COMPANY_LIST = APP_DIR / "data" / "company_list.csv"
+DEFAULT_OHLC_PATH = APP_DIR / "data" / "ohlc.csv"
 OHLC_REQUIRED_COLUMNS = ("Date", "Open", "High", "Low", "Close")
 
 
 def default_data_path(relative_path: Path, local_path: Path) -> Path:
     """Prefer a repository-relative path, with a local-machine fallback when present."""
-    if relative_path.exists():
-        return relative_path
+    resolved_relative = resolve_input_path(relative_path)
+    if resolved_relative.exists():
+        return resolved_relative
     return local_path if local_path.exists() else relative_path
+
+
+def resolve_input_path(path: str | Path) -> Path:
+    """Resolve relative data paths from the application directory, not process cwd."""
+    candidate = Path(path).expanduser()
+    return candidate if candidate.is_absolute() else APP_DIR / candidate
 
 
 def resolve_company_root(data_root: str | Path) -> Path:
     """Find the directory containing company folders in either archive layout."""
-    root = Path(data_root).expanduser()
+    root = resolve_input_path(data_root)
     nested = root / "Detailed-Financials-Data-Of-4456-NSE-_-BSE-Company"
     if nested.is_dir():
         return nested
@@ -138,7 +146,7 @@ def load_company_table(
 
 def load_company_list(path: str | Path) -> set[str]:
     """Read the optional supplied company list without requiring a header format."""
-    list_path = Path(path).expanduser()
+    list_path = resolve_input_path(path)
     if not list_path.is_file():
         return set()
     try:
@@ -155,7 +163,7 @@ def load_ohlc_csv(path: str | Path, company: str | None = None) -> pd.DataFrame:
     Required columns are Date, Open, High, Low, and Close. An optional Company
     or Symbol column lets one file hold data for multiple companies.
     """
-    ohlc_path = Path(path).expanduser()
+    ohlc_path = resolve_input_path(path)
     if not ohlc_path.is_file():
         return pd.DataFrame()
     try:
@@ -189,7 +197,7 @@ def load_ohlc_csv(path: str | Path, company: str | None = None) -> pd.DataFrame:
 
 def ohlc_schema_message(path: str | Path) -> str | None:
     """Return a user-facing validation message, or None when the file is valid."""
-    ohlc_path = Path(path).expanduser()
+    ohlc_path = resolve_input_path(path)
     if not ohlc_path.is_file():
         return None
     try:
