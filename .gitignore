@@ -1,0 +1,22 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Streamlit and local tooling
+.streamlit/secrets.toml
+.streamlit/
+
+# Local/source datasets and private attachments
+Detailed-Financials-Data-Of-4456-NSE-And-BSE-Company-*/
+data/financials/
+data/company_list.csv
+*.zip
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
