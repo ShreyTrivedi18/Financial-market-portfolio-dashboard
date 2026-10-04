@@ -42,8 +42,8 @@ def cached_universe(data_root: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def cached_real_universe(path: str) -> pd.DataFrame:
-    return load_real_universe(path)
+def cached_real_universe(path: str, data_root: str) -> pd.DataFrame:
+    return load_real_universe(path, data_root)
 
 
 @st.cache_data(show_spinner=False)
@@ -58,7 +58,7 @@ def cached_yfinance_ohlc(ticker: str) -> pd.DataFrame:
 
 def money(value: object) -> str:
     if pd.isna(value):
-        return "—"
+        return "Not available from supplied source"
     return f"₹{float(value):,.2f}"
 
 
@@ -69,7 +69,7 @@ def metric_value(universe: pd.DataFrame, company: str, field: str) -> float:
 
 def metric_text(value: object, suffix: str = "", decimals: int = 1) -> str:
     if pd.isna(value):
-        return "—"
+        return "Not available from supplied source"
     return f"{float(value):,.{decimals}f}{suffix}"
 
 
@@ -175,7 +175,7 @@ with st.sidebar:
     starting_value = st.number_input("Illustrative portfolio value (₹)", 1000.0, 1e9, 100000.0, 1000.0)
     st.caption("Portfolio weights below are equal-weight defaults for comparison, not recommendations.")
 
-universe = cached_real_universe(real_universe_path).head(company_limit).copy()
+universe = cached_real_universe(real_universe_path, data_root).head(company_limit).copy()
 if universe.empty:
     st.error(
         "No company records could be loaded. Check the financials folder path and ensure it "
@@ -215,7 +215,7 @@ with tab_overview:
     kpi1.metric("Companies", f"{len(filtered):,}")
     kpi2.metric("Sectors", f"{filtered['Sector'].nunique():,}")
     kpi3.metric("Median market cap", money(filtered["Market Cap"].median()))
-    kpi4.metric("Median ROE", f"{filtered['ROE'].median():.1f}%" if filtered["ROE"].notna().any() else "—")
+    kpi4.metric("Median ROE", f"{filtered['ROE'].median():.1f}%" if filtered["ROE"].notna().any() else "Not available from supplied source")
     if filtered.empty:
         st.warning("No companies match the current filters.")
     else:
@@ -281,6 +281,8 @@ with tab_overview:
             ("Sales growth", metric_text(profile.get("Sales growth", np.nan), "%")),
             ("Profit growth", metric_text(profile.get("Profit growth", np.nan), "%")),
             ("Debt", money(profile.get("Debt", np.nan))),
+            ("Debt / equity", metric_text(profile.get("Debt / equity", np.nan), "x")),
+            ("Profit margin", metric_text(profile.get("Profit margin", np.nan), "%")),
             ("Dividend yield", metric_text(profile.get("Dividend Yield", np.nan), "%")),
             ("NSE", str(profile.get("NSE", "—"))),
             ("BSE", str(profile.get("BSE", "—"))),
@@ -288,6 +290,19 @@ with tab_overview:
         ]
         for index, (label, value) in enumerate(profile_metrics):
             profile_cols[index % 4].metric(label, value)
+        available_count = sum(
+            pd.notna(profile.get(field, np.nan))
+            for field in (
+                "Market Cap", "Current Price", "Stock P/E", "Price to Sales", "ROE",
+                "ROCE", "Sales growth", "Profit growth", "Debt", "Dividend Yield",
+                "Profit margin", "Debt / equity",
+            )
+        )
+        st.info(
+            f"Fundamentals coverage: {available_count}/12 profile metrics. "
+            f"Source: {profile.get('Fundamentals source', 'Not available')}. "
+            f"{profile.get('Fundamentals freshness', '')}"
+        )
         st.caption(
             f"Sector: {profile.get('Sector', 'Unknown')} · profile values are descriptive "
             "dataset fields, not recommendations."
@@ -380,6 +395,12 @@ with tab_health:
     health_cards[1].metric("Latest ROCE", metric_text(latest_metric(ratios, "ROCE"), "%"))
     health_cards[2].metric("Current ratio", metric_text(latest_metric(ratios, "Current Ratio"), "x"))
     health_cards[3].metric("Debt / equity", metric_text(latest_metric(ratios, "Debt / equity"), "x"))
+    health_profile = universe.loc[universe["Company"].eq(company)].iloc[0]
+    st.caption(
+        f"Fundamentals source: {health_profile.get('Fundamentals source', 'Not available')} · "
+        f"coverage: {health_profile.get('Fundamentals coverage', '0/0 metrics')} · "
+        f"{health_profile.get('Fundamentals freshness', '')}"
+    )
     c1, c2 = st.columns(2)
     with c1:
         ratio_chart = chart_rows(

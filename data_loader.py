@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import re
 
 import numpy as np
 import pandas as pd
@@ -88,7 +89,10 @@ def resolve_company_root(data_root: str | Path) -> Path:
 def _clean_number(value: object) -> float:
     if pd.isna(value):
         return np.nan
-    text = str(value).strip().replace(",", "").replace("%", "")
+    text = str(value).strip().replace(",", "").replace("%", "").replace("₹", "")
+    text = text.replace("−", "-").replace("–", "-").replace("—", "-")
+    if text.startswith("(") and text.endswith(")"):
+        text = f"-{text[1:-1]}"
     if text in {"", "-", "--", "nan", "None"}:
         return np.nan
     try:
@@ -98,12 +102,40 @@ def _clean_number(value: object) -> float:
         return np.nan
 
 
+def _metric_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value).casefold()).strip()
+
+
+METRIC_ALIASES = {
+    "current price": ("current price", "price", "currentprice"),
+    "market cap": ("market cap", "market capitalization", "marketcapitalisation"),
+    "stock p/e": ("stock p/e", "p/e", "pe ratio", "price earnings"),
+    "price to sales": ("price to sales", "p/s", "price sales"),
+    "dividend yield": ("dividend yield", "dividend"),
+    "sales growth": ("sales growth", "revenue growth"),
+    "profit growth": ("profit growth", "net profit growth", "earnings growth"),
+    "roe": ("roe", "return on equity"),
+    "roce": ("roce", "return on capital employed", "roce %"),
+    "debt": ("debt", "total debt", "borrowings"),
+    "debt / equity": ("debt / equity", "debt/equity", "debt equity", "d/e"),
+    "current ratio": ("current ratio", "current ratio x"),
+}
+
+
+def _canonical_metric(value: object) -> str:
+    key = _metric_key(value)
+    for canonical, aliases in METRIC_ALIASES.items():
+        if key in {_metric_key(alias) for alias in aliases}:
+            return canonical
+    return str(value).strip()
+
+
 def _read_wide_csv(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path)
     if frame.empty:
         return pd.DataFrame(columns=["metric", "period", "value"])
     frame = frame.rename(columns={frame.columns[0]: "metric"})
-    frame["metric"] = frame["metric"].astype(str).str.strip()
+    frame["metric"] = frame["metric"].map(_canonical_metric)
     tidy = frame.melt(id_vars=["metric"], var_name="period", value_name="value")
     tidy["value"] = tidy["value"].map(_clean_number)
     tidy["period"] = tidy["period"].astype(str).str.strip()
@@ -165,8 +197,60 @@ def load_company_universe(data_root: str | Path) -> pd.DataFrame:
     return universe.sort_values("Company").reset_index(drop=True)
 
 
-def load_real_universe(path: str | Path) -> pd.DataFrame:
-    """Load the curated real NSE universe used by the public dashboard."""
+def _archive_records(data_root: str | Path) -> dict[str, dict[str, object]]:
+    """Read supplied archive basics keyed by normalized company name."""
+    discovered = load_company_universe(data_root)
+    if discovered.empty:
+        return {}
+    return {
+        _metric_key(row["Company"]): row.to_dict()
+        for _, row in discovered.iterrows()
+        if pd.notna(row.get("Company"))
+    }
+
+
+def _latest_metric(table: pd.DataFrame, *metrics: str) -> float:
+    if table.empty:
+        return np.nan
+    wanted = {_canonical_metric(metric) for metric in metrics}
+    values = table.loc[table["metric"].isin(wanted), "value"].dropna()
+    return float(values.iloc[-1]) if not values.empty else np.nan
+
+
+def _archive_fundamentals(company: str, data_root: str | Path) -> dict[str, object]:
+    """Return only archive-backed or derivable fundamentals for one company."""
+    records = _archive_records(data_root)
+    basic = records.get(_metric_key(company))
+    if basic is None:
+        return {}
+    result = {field: basic.get(field, np.nan) for field in (
+        "Market Cap", "Current Price", "Stock P/E", "Book Value", "Dividend Yield",
+        "ROCE", "ROE", "Price to Sales", "Sales growth", "Profit growth", "EPS", "Debt",
+    )}
+    ratios = load_company_table(company, data_root, "Ratios.csv")
+    profit_loss = load_company_table(company, data_root, "Yearly_Profit_Loss.csv")
+    balance = load_company_table(company, data_root, "Yearly_Balance_Sheet.csv")
+    result["ROCE"] = result["ROCE"] if pd.notna(result["ROCE"]) else _latest_metric(ratios, "ROCE")
+    result["ROE"] = result["ROE"] if pd.notna(result["ROE"]) else _latest_metric(ratios, "ROE")
+    result["Debt / equity"] = _latest_metric(ratios, "Debt / equity")
+    if pd.isna(result["Debt / equity"]):
+        borrowings = _latest_metric(balance, "Borrowings", "Debt")
+        equity = _latest_metric(balance, "Equity Capital")
+        reserves = _latest_metric(balance, "Reserves")
+        if pd.notna(borrowings) and pd.notna(equity) and pd.notna(reserves) and equity + reserves != 0:
+            result["Debt / equity"] = borrowings / (equity + reserves)
+    net_profit = _latest_metric(profit_loss, "Net Profit")
+    sales = _latest_metric(profit_loss, "Sales", "Revenue")
+    if pd.notna(net_profit) and pd.notna(sales) and sales != 0:
+        result["Profit margin"] = net_profit / sales * 100
+    result["Profit margin"] = result.get("Profit margin", np.nan)
+    return result
+
+
+def load_real_universe(
+    path: str | Path, data_root: str | Path = DEFAULT_DATA_ROOT
+) -> pd.DataFrame:
+    """Load the curated NSE map and join only matching supplied archive fundamentals."""
     universe_path = resolve_input_path(path)
     if not universe_path.is_file():
         return pd.DataFrame()
@@ -183,6 +267,29 @@ def load_real_universe(path: str | Path) -> pd.DataFrame:
             frame[column] = np.nan
         frame[column] = frame[column].map(_clean_number)
     frame["BSE"] = frame.get("BSE", "—")
+    archive_records = _archive_records(data_root)
+    coverage_fields = [
+        "Market Cap", "Current Price", "Stock P/E", "ROE", "ROCE", "Sales growth",
+        "Profit growth", "Dividend Yield", "Debt", "Debt / equity", "Profit margin",
+    ]
+    for index, row in frame.iterrows():
+        archive = _archive_fundamentals(row["Company"], data_root)
+        if archive:
+            for field, value in archive.items():
+                if field not in frame.columns:
+                    frame[field] = np.nan
+                if pd.notna(value):
+                    frame.at[index, field] = _clean_number(value)
+    frame["Fundamentals source"] = frame["Company"].map(
+        lambda company: "Supplied archive" if _metric_key(company) in archive_records else "Not available"
+    )
+    frame["Fundamentals coverage"] = frame.apply(
+        lambda row: f"{sum(pd.notna(row.get(field, np.nan)) for field in coverage_fields)}/{len(coverage_fields)} metrics",
+        axis=1,
+    )
+    frame["Fundamentals freshness"] = frame["Fundamentals source"].map(
+        lambda source: "Archive export (periods shown in statements)" if source == "Supplied archive" else "No supplied archive match"
+    )
     return frame.sort_values("Company").reset_index(drop=True)
 
 

@@ -57,6 +57,34 @@ The repository includes a reduced subset of identifiable companies from the supp
 
 ## V3 market-data provenance
 
+### Fundamentals provenance and coverage
+
+The 31-row `data/real_universe.csv` file is a company-to-NSE/Yahoo symbol map, not a
+fundamentals dataset. At startup the dashboard separately joins rows whose normalized
+company name exists in the user-selected supplied archive. The join is read-only and
+does not copy, rewrite, or augment the archive. Each profile reports `Fundamentals
+source`, a metric count, and freshness text. A metric that is absent from both the
+curated row and the matching archive is rendered as **Not available from supplied
+source**, never as a guessed value.
+
+Archive fundamentals are kept separate from Yahoo Finance price history. Yahoo is used
+only for the Price/OHLC tab and is labelled with retrieval time; the bundled OHLC CSV
+is labelled as a dated snapshot. Archive statement periods are retained in the
+Financial health tab. Numeric cleaning accepts commas, currency signs, percent signs,
+parenthesized negatives, and common dash placeholders. Recognized aliases include
+ROE/return on equity, ROCE/return on capital employed, debt/equity variants, and
+current-ratio variants.
+
+The app derives a metric only when all required archive inputs are finite and
+non-zero: profit margin = `Net Profit / Sales × 100`; debt/equity =
+`Borrowings / (Equity Capital + Reserves)`. It does not derive market prices,
+market capitalization, P/E, growth, or dividends. A coverage count is informational,
+not a quality score: the supplied reduced repository archive currently contains five
+company folders, while the curated map contains 31 real companies. The remaining
+mapped companies therefore legitimately show unavailable fundamentals until a
+matching supplied archive is provided. Yahoo availability, delayed quotes, corporate
+actions, and archive period differences remain limitations.
+
 The curated mapping in `data/real_universe.csv` contains these 31 real Indian NSE companies and Yahoo Finance symbols:
 
 | Company | Yahoo Finance symbol |
