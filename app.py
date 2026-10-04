@@ -78,6 +78,39 @@ def company_value(universe: pd.DataFrame, company: str, field: str) -> object:
     return rows.iloc[0] if not rows.empty else np.nan
 
 
+def sanitize_numeric_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Return a chart-only copy with numeric columns coerced and non-finite values removed."""
+    clean = frame.copy()
+    for column in columns:
+        if column in clean.columns:
+            clean[column] = pd.to_numeric(clean[column], errors="coerce")
+            clean[column] = clean[column].replace([np.inf, -np.inf], np.nan)
+    return clean
+
+
+def chart_rows(
+    frame: pd.DataFrame,
+    required_columns: list[str],
+    chart_name: str,
+    minimum_rows: int = 1,
+) -> pd.DataFrame:
+    """Keep only finite rows needed by a chart and explain when it cannot be drawn."""
+    clean = sanitize_numeric_columns(frame, required_columns)
+    if not set(required_columns).issubset(clean.columns):
+        st.info(f"{chart_name} is unavailable because required numeric fields are missing.")
+        return clean.iloc[0:0]
+    clean = clean.dropna(subset=required_columns)
+    if len(clean) < minimum_rows:
+        st.info(f"{chart_name} needs at least {minimum_rows} valid data row(s) to be shown.")
+        return clean.iloc[0:0]
+    return clean
+
+
+def bounded_marker_sizes(values: pd.Series) -> pd.Series:
+    """Keep Plotly bubble sizes finite and positive without changing displayed table values."""
+    return pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).clip(1.0, 100.0)
+
+
 def latest_metric(table: pd.DataFrame, metric: str) -> float:
     values = table.loc[table["metric"].eq(metric), "value"].dropna()
     return float(values.iloc[-1]) if not values.empty else np.nan
@@ -87,9 +120,12 @@ def plot_statement(table: pd.DataFrame, metrics: list[str], title: str) -> None:
     if table.empty:
         st.info("This statement is not available for the selected company.")
         return
-    chart = table[table["metric"].isin(metrics)].dropna(subset=["value"]).copy()
+    chart = chart_rows(
+        table[table["metric"].isin(metrics)],
+        ["value"],
+        title,
+    )
     if chart.empty:
-        st.info("No numeric values were found for this view.")
         return
     chart["period"] = pd.Categorical(
         chart["period"], categories=list(dict.fromkeys(chart["period"])), ordered=True
@@ -187,17 +223,31 @@ with tab_overview:
         sector_counts.columns = ["Sector", "Companies"]
         left, right = st.columns(2)
         with left:
-            st.plotly_chart(px.bar(sector_counts.head(15), x="Companies", y="Sector", orientation="h",
-                                   title="Companies by sector"), use_container_width=True)
+            sector_chart = chart_rows(sector_counts.head(15), ["Companies"], "Companies by sector")
+            if not sector_chart.empty:
+                st.plotly_chart(px.bar(sector_chart, x="Companies", y="Sector", orientation="h",
+                                       title="Companies by sector"), use_container_width=True)
         with right:
-            st.plotly_chart(px.scatter(filtered, x="Market Cap", y="ROE", hover_name="Company",
-                                       color="Sector", size="Current Price",
-                                       title="Market cap vs ROE (descriptive only)"),
-                            use_container_width=True)
-        if filtered["Market Cap"].notna().any():
+            overview_scatter = chart_rows(
+                filtered, ["Market Cap", "ROE", "Current Price"],
+                "Market cap vs ROE", minimum_rows=2,
+            )
+            if not overview_scatter.empty:
+                overview_scatter["Marker Size"] = bounded_marker_sizes(
+                    overview_scatter["Current Price"]
+                )
+                st.plotly_chart(px.scatter(
+                    overview_scatter, x="Market Cap", y="ROE", hover_name="Company",
+                    color="Sector", size="Marker Size",
+                    title="Market cap vs ROE (descriptive only)",
+                ), use_container_width=True)
+        treemap_data = chart_rows(
+            filtered, ["Market Cap", "ROE"], "Sector market-cap composition"
+        )
+        if not treemap_data.empty:
             st.plotly_chart(
                 px.treemap(
-                    filtered.dropna(subset=["Market Cap"]),
+                    treemap_data,
                     path=["Sector", "Company"],
                     values="Market Cap",
                     color="ROE",
@@ -206,8 +256,6 @@ with tab_overview:
                 ),
                 use_container_width=True,
             )
-        else:
-            st.info("Market-cap values are unavailable in the curated mapping; treemap is hidden.")
         display_cols = ["Company", "Sector", "NSE", "BSE", "Market Cap", "Current Price", "ROE", "ROCE"]
         overview_table = filtered[[c for c in display_cols if c in filtered.columns]].head(100)
         st.dataframe(overview_table, use_container_width=True, hide_index=True)
@@ -255,14 +303,22 @@ with tab_portfolio:
         portfolio["Illustrative allocation"] = portfolio["Weight"] * starting_value
         left, right = st.columns([1, 1])
         with left:
-            st.plotly_chart(px.pie(portfolio, names="Company", values="Weight", hole=0.45,
-                                   title=f"Equal weights across first {len(portfolio)} matches"),
-                            use_container_width=True)
+            portfolio_pie = chart_rows(portfolio, ["Weight"], "Portfolio allocation")
+            if not portfolio_pie.empty:
+                st.plotly_chart(px.pie(
+                    portfolio_pie, names="Company", values="Weight", hole=0.45,
+                    title=f"Equal weights across first {len(portfolio)} matches",
+                ), use_container_width=True)
         with right:
-            st.plotly_chart(px.bar(portfolio.sort_values("Illustrative allocation"),
-                                   x="Illustrative allocation", y="Company", orientation="h",
-                                   title="Illustrative allocation (₹)"),
-                            use_container_width=True)
+            portfolio_bar = chart_rows(
+                portfolio, ["Illustrative allocation"], "Illustrative allocation"
+            )
+            if not portfolio_bar.empty:
+                st.plotly_chart(px.bar(
+                    portfolio_bar.sort_values("Illustrative allocation"),
+                    x="Illustrative allocation", y="Company", orientation="h",
+                    title="Illustrative allocation (₹)",
+                ), use_container_width=True)
         st.dataframe(portfolio[["Company", "Sector", "Weight", "Illustrative allocation"]],
                      use_container_width=True, hide_index=True)
         st.download_button(
@@ -280,22 +336,26 @@ with tab_compare:
         compare = filtered[filtered["Company"].isin(selected)].copy()
         metric_options = ["Market Cap", "Current Price", "Stock P/E", "ROE", "ROCE", "Sales growth", "Profit growth"]
         metric = st.selectbox("Comparison metric", [m for m in metric_options if m in compare.columns])
-        st.plotly_chart(px.bar(compare.sort_values(metric), x=metric, y="Company", color="Sector",
-                               orientation="h", title=f"{metric} comparison"),
-                        use_container_width=True)
-        st.plotly_chart(
-            px.scatter(
-                compare,
-                x="Stock P/E",
-                y="ROE",
-                size="Market Cap",
-                color="Sector",
-                hover_name="Company",
+        comparison_bar = chart_rows(compare, [metric], f"{metric} comparison")
+        if not comparison_bar.empty:
+            st.plotly_chart(px.bar(
+                comparison_bar.sort_values(metric), x=metric, y="Company", color="Sector",
+                orientation="h", title=f"{metric} comparison",
+            ), use_container_width=True)
+        comparison_scatter = chart_rows(
+            compare, ["Stock P/E", "ROE", "Market Cap"],
+            "Valuation versus profitability", minimum_rows=2,
+        )
+        if not comparison_scatter.empty:
+            comparison_scatter["Marker Size"] = bounded_marker_sizes(
+                comparison_scatter["Market Cap"]
+            )
+            st.plotly_chart(px.scatter(
+                comparison_scatter, x="Stock P/E", y="ROE", size="Marker Size",
+                color="Sector", hover_name="Company",
                 title="Valuation versus profitability (descriptive only)",
                 labels={"Stock P/E": "Stock P/E (x)", "ROE": "ROE (%)"},
-            ),
-            use_container_width=True,
-        )
+            ), use_container_width=True)
         st.dataframe(compare[["Company", "Sector"] + [m for m in metric_options if m in compare.columns]],
                      use_container_width=True, hide_index=True)
         st.download_button(
@@ -322,10 +382,15 @@ with tab_health:
     health_cards[3].metric("Debt / equity", metric_text(latest_metric(ratios, "Debt / equity"), "x"))
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(px.bar(ratios[ratios["metric"].isin(["Current Ratio", "Debt / equity", "ROE", "ROCE"])],
-                               x="period", y="value", color="metric", barmode="group",
-                               title="Selected ratios") if not ratios.empty else go.Figure(),
-                        use_container_width=True)
+        ratio_chart = chart_rows(
+            ratios[ratios["metric"].isin(["Current Ratio", "Debt / equity", "ROE", "ROCE"])],
+            ["value"], "Selected ratios",
+        )
+        if not ratio_chart.empty:
+            st.plotly_chart(px.bar(
+                ratio_chart, x="period", y="value", color="metric", barmode="group",
+                title="Selected ratios",
+            ), use_container_width=True)
     with c2:
         plot_statement(profit_loss, ["Sales", "Operating Profit", "Net Profit"], "Profit and loss trend")
     debt_profit = pd.concat(
@@ -335,10 +400,11 @@ with tab_health:
         ],
         ignore_index=True,
     )
-    if not debt_profit.empty:
+    debt_profit_chart = chart_rows(debt_profit, ["value"], "Borrowings and net profit")
+    if not debt_profit_chart.empty:
         st.plotly_chart(
             px.bar(
-                debt_profit,
+                debt_profit_chart,
                 x="period",
                 y="value",
                 color="source",
@@ -397,8 +463,19 @@ with tab_price:
             "No real OHLC rows are available for this company. Add a valid OHLC CSV or "
             "restore network access; no synthetic price path is shown in v3."
         )
+    ohlc = chart_rows(
+        ohlc,
+        ["Open", "High", "Low", "Close"],
+        "Historical OHLC chart",
+    )
     if ohlc.empty:
         st.stop()
+    ohlc = ohlc.sort_values("Date").copy()
+    if "Volume" in ohlc.columns:
+        ohlc["Volume"] = pd.to_numeric(ohlc["Volume"], errors="coerce")
+        ohlc["Volume"] = ohlc["Volume"].replace([np.inf, -np.inf], np.nan)
+        if ohlc["Volume"].notna().any():
+            ohlc = ohlc.dropna(subset=["Volume"]).copy()
     st.caption(
         f"Data source: {source_label}. Historical observations are not forecasts or investment advice."
     )

@@ -92,7 +92,8 @@ def _clean_number(value: object) -> float:
     if text in {"", "-", "--", "nan", "None"}:
         return np.nan
     try:
-        return float(text)
+        number = float(text)
+        return number if np.isfinite(number) else np.nan
     except ValueError:
         return np.nan
 
@@ -287,6 +288,7 @@ def load_yfinance_ohlc(
     )
     for column in ("Open", "High", "Low", "Close", "Volume"):
         result[column] = pd.to_numeric(result[column], errors="coerce")
+        result[column] = result[column].replace([np.inf, -np.inf], np.nan)
     result = result.dropna(subset=list(OHLC_REQUIRED_COLUMNS))
     return result[
         (result["High"] >= result[["Open", "Close"]].max(axis=1))
