@@ -11,6 +11,7 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
+import yfinance as yf
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -24,7 +25,41 @@ LOCAL_COMPANY_LIST = Path(
 DEFAULT_DATA_ROOT = APP_DIR / "data" / "financials"
 DEFAULT_COMPANY_LIST = APP_DIR / "data" / "company_list.csv"
 DEFAULT_OHLC_PATH = APP_DIR / "data" / "ohlc.csv"
+DEFAULT_REAL_UNIVERSE = APP_DIR / "data" / "real_universe.csv"
 OHLC_REQUIRED_COLUMNS = ("Date", "Open", "High", "Low", "Close")
+REAL_TICKER_MAP = {
+    "3M India Ltd": "3MINDIA.NS",
+    "ABB India Ltd": "ABB.NS",
+    "ACC Ltd": "ACC.NS",
+    "AAVAS Financiers Ltd": "AAVAS.NS",
+    "5Paisa Capital Ltd": "5PAISA.NS",
+    "Asian Paints Ltd": "ASIANPAINT.NS",
+    "Axis Bank Ltd": "AXISBANK.NS",
+    "Bajaj Finance Ltd": "BAJFINANCE.NS",
+    "Bharti Airtel Ltd": "BHARTIARTL.NS",
+    "Britannia Industries Ltd": "BRITANNIA.NS",
+    "Cipla Ltd": "CIPLA.NS",
+    "Coal India Ltd": "COALINDIA.NS",
+    "Eicher Motors Ltd": "EICHERMOT.NS",
+    "HCL Technologies Ltd": "HCLTECH.NS",
+    "Hindalco Industries Ltd": "HINDALCO.NS",
+    "Hindustan Unilever Ltd": "HINDUNILVR.NS",
+    "ICICI Bank Ltd": "ICICIBANK.NS",
+    "Infosys Ltd": "INFY.NS",
+    "ITC Ltd": "ITC.NS",
+    "JSW Steel Ltd": "JSWSTEEL.NS",
+    "Kotak Mahindra Bank Ltd": "KOTAKBANK.NS",
+    "Larsen & Toubro Ltd": "LT.NS",
+    "Maruti Suzuki India Ltd": "MARUTI.NS",
+    "NTPC Ltd": "NTPC.NS",
+    "Power Grid Corporation of India Ltd": "POWERGRID.NS",
+    "Reliance Industries Ltd": "RELIANCE.NS",
+    "State Bank of India": "SBIN.NS",
+    "Tata Consultancy Services Ltd": "TCS.NS",
+    "Tata Motors Ltd": "TATAMOTORS.NS",
+    "Titan Company Ltd": "TITAN.NS",
+    "Wipro Ltd": "WIPRO.NS",
+}
 
 
 def default_data_path(relative_path: Path, local_path: Path) -> Path:
@@ -129,6 +164,27 @@ def load_company_universe(data_root: str | Path) -> pd.DataFrame:
     return universe.sort_values("Company").reset_index(drop=True)
 
 
+def load_real_universe(path: str | Path) -> pd.DataFrame:
+    """Load the curated real NSE universe used by the public dashboard."""
+    universe_path = resolve_input_path(path)
+    if not universe_path.is_file():
+        return pd.DataFrame()
+    try:
+        frame = pd.read_csv(universe_path)
+    except (OSError, pd.errors.ParserError, UnicodeDecodeError):
+        return pd.DataFrame()
+    required = {"Company", "Sector", "NSE", "Yahoo Symbol"}
+    if not required.issubset(frame.columns):
+        return pd.DataFrame()
+    for column in ("Market Cap", "Current Price", "Stock P/E", "ROE", "ROCE",
+                   "Sales growth", "Profit growth", "Dividend Yield", "Debt"):
+        if column not in frame:
+            frame[column] = np.nan
+        frame[column] = frame[column].map(_clean_number)
+    frame["BSE"] = frame.get("BSE", "—")
+    return frame.sort_values("Company").reset_index(drop=True)
+
+
 def load_company_table(
     company: str, data_root: str | Path, table_name: str
 ) -> pd.DataFrame:
@@ -193,6 +249,49 @@ def load_ohlc_csv(path: str | Path, company: str | None = None) -> pd.DataFrame:
         & (frame["Low"] <= frame[["Open", "Close"]].min(axis=1))
     ]
     return frame.sort_values("Date").reset_index(drop=True)
+
+
+def load_yfinance_ohlc(
+    ticker: str, period: str = "2y", interval: str = "1d"
+) -> pd.DataFrame:
+    """Fetch Yahoo Finance OHLC data and normalize it for the price view."""
+    try:
+        frame = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=False,
+            progress=False,
+            group_by="column",
+            threads=False,
+        )
+    except Exception:
+        return pd.DataFrame()
+    if frame.empty:
+        return pd.DataFrame()
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+    frame = frame.reset_index()
+    date_column = "Date" if "Date" in frame.columns else "Datetime"
+    if date_column not in frame.columns:
+        return pd.DataFrame()
+    result = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(frame[date_column], errors="coerce"),
+            "Open": frame.get("Open"),
+            "High": frame.get("High"),
+            "Low": frame.get("Low"),
+            "Close": frame.get("Close"),
+            "Volume": frame.get("Volume"),
+        }
+    )
+    for column in ("Open", "High", "Low", "Close", "Volume"):
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+    result = result.dropna(subset=list(OHLC_REQUIRED_COLUMNS))
+    return result[
+        (result["High"] >= result[["Open", "Close"]].max(axis=1))
+        & (result["Low"] <= result[["Open", "Close"]].min(axis=1))
+    ].sort_values("Date").reset_index(drop=True)
 
 
 def ohlc_schema_message(path: str | Path) -> str | None:

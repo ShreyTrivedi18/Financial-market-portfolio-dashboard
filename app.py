@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime, timezone
 import streamlit as st
 
 from data_loader import (
@@ -12,14 +13,17 @@ from data_loader import (
     DEFAULT_COMPANY_LIST,
     DEFAULT_DATA_ROOT,
     DEFAULT_OHLC_PATH,
+    DEFAULT_REAL_UNIVERSE,
     LOCAL_COMPANY_LIST,
     LOCAL_SOURCE_DATA_ROOT,
     default_data_path,
     load_company_list,
     load_ohlc_csv,
+    load_yfinance_ohlc,
     load_company_table,
     load_company_universe,
-    make_illustrative_ohlc,
+    load_real_universe,
+    REAL_TICKER_MAP,
     ohlc_schema_message,
 )
 
@@ -38,8 +42,18 @@ def cached_universe(data_root: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def cached_real_universe(path: str) -> pd.DataFrame:
+    return load_real_universe(path)
+
+
+@st.cache_data(show_spinner=False)
 def cached_table(company: str, data_root: str, table_name: str) -> pd.DataFrame:
     return load_company_table(company, data_root, table_name)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def cached_yfinance_ohlc(ticker: str) -> pd.DataFrame:
+    return load_yfinance_ohlc(ticker)
 
 
 def money(value: object) -> str:
@@ -88,7 +102,7 @@ def plot_statement(table: pd.DataFrame, metrics: list[str], title: str) -> None:
 
 st.title("Financial Market & Stock Portfolio Tracker")
 st.caption(
-    "Academic dashboard for exploring the supplied NSE/BSE company dataset. "
+    "Academic dashboard using identifiable Indian NSE companies and Yahoo Finance market data. "
     "It is descriptive only and is not investment advice."
 )
 
@@ -104,33 +118,43 @@ with st.sidebar:
         str(default_data_path(DEFAULT_COMPANY_LIST, LOCAL_COMPANY_LIST)),
         help="CSV containing company names; leave the default if unavailable.",
     )
+    real_universe_path = st.text_input(
+        "Curated NSE universe",
+        str(DEFAULT_REAL_UNIVERSE),
+        help="Repository-contained real-company mapping; expand this CSV to add tickers.",
+    )
     ohlc_path = st.text_input(
         "Optional OHLC CSV",
         str(default_data_path(DEFAULT_OHLC_PATH, DEFAULT_OHLC_PATH)),
         help="Long-format CSV with Date, Open, High, Low, Close and optional Company/Symbol.",
     )
+    use_live_data = st.checkbox(
+        "Try Yahoo Finance live/historical data",
+        value=True,
+        help="Uses a cached Yahoo Finance download; bundled real snapshot is used if unavailable.",
+    )
+    company_limit = st.slider("Companies shown", 5, 50, 30, 5)
     st.divider()
     st.header("Portfolio assumptions")
     starting_value = st.number_input("Illustrative portfolio value (₹)", 1000.0, 1e9, 100000.0, 1000.0)
     st.caption("Portfolio weights below are equal-weight defaults for comparison, not recommendations.")
 
-universe = cached_universe(data_root)
+universe = cached_real_universe(real_universe_path).head(company_limit).copy()
 if universe.empty:
     st.error(
         "No company records could be loaded. Check the financials folder path and ensure it "
         "contains company subfolders with *_Basic_Info.csv files."
     )
     st.caption(
-        f"Resolved financials path: `{data_root}` · app directory: "
+        f"Resolved universe path: `{real_universe_path}` · app directory: "
         f"`{APP_DIR}`"
     )
     st.stop()
 
-listed_names = load_company_list(company_list_path)
-if listed_names:
-    universe["In supplied list"] = universe["Company"].isin(listed_names)
-else:
-    universe["In supplied list"] = True
+# The public view is driven by the curated real NSE mapping. The optional
+# company-list input remains available for local workflows but never hides
+# mapped real companies in the cloud view.
+universe["In supplied list"] = True
 
 with st.sidebar:
     sectors = sorted(value for value in universe["Sector"].dropna().unique() if value)
@@ -170,17 +194,20 @@ with tab_overview:
                                        color="Sector", size="Current Price",
                                        title="Market cap vs ROE (descriptive only)"),
                             use_container_width=True)
-        st.plotly_chart(
-            px.treemap(
-                filtered.dropna(subset=["Market Cap"]),
-                path=["Sector", "Company"],
-                values="Market Cap",
-                color="ROE",
-                color_continuous_scale="RdYlGn",
-                title="Sector market-cap composition (dataset units)",
-            ),
-            use_container_width=True,
-        )
+        if filtered["Market Cap"].notna().any():
+            st.plotly_chart(
+                px.treemap(
+                    filtered.dropna(subset=["Market Cap"]),
+                    path=["Sector", "Company"],
+                    values="Market Cap",
+                    color="ROE",
+                    color_continuous_scale="RdYlGn",
+                    title="Sector market-cap composition (dataset units)",
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("Market-cap values are unavailable in the curated mapping; treemap is hidden.")
         display_cols = ["Company", "Sector", "NSE", "BSE", "Market Cap", "Current Price", "ROE", "ROCE"]
         overview_table = filtered[[c for c in display_cols if c in filtered.columns]].head(100)
         st.dataframe(overview_table, use_container_width=True, hide_index=True)
@@ -209,6 +236,7 @@ with tab_overview:
             ("Dividend yield", metric_text(profile.get("Dividend Yield", np.nan), "%")),
             ("NSE", str(profile.get("NSE", "—"))),
             ("BSE", str(profile.get("BSE", "—"))),
+            ("Yahoo symbol", REAL_TICKER_MAP.get(profile_company, "—")),
         ]
         for index, (label, value) in enumerate(profile_metrics):
             profile_cols[index % 4].metric(label, value)
@@ -338,20 +366,42 @@ with tab_health:
 with tab_price:
     st.subheader("Price / OHLC view")
     company = st.selectbox("Company", filtered["Company"].tolist() or universe["Company"].tolist(), key="price_company")
-    price = metric_value(universe, company, "Current Price")
-    real_ohlc = load_ohlc_csv(ohlc_path, company)
+    ticker = REAL_TICKER_MAP.get(company)
+    if use_live_data and ticker:
+        with st.spinner(f"Loading cached Yahoo Finance history for {ticker}..."):
+            live_ohlc = cached_yfinance_ohlc(ticker)
+    else:
+        live_ohlc = pd.DataFrame()
+    snapshot_ohlc = load_ohlc_csv(ohlc_path, company)
     schema_error = ohlc_schema_message(ohlc_path)
     if schema_error:
-        st.warning(schema_error + " Using the illustrative fallback until it is corrected.")
-    if not real_ohlc.empty:
-        ohlc = real_ohlc
-        st.success(f"Using real OHLC data from `{ohlc_path}` ({len(ohlc):,} rows).")
-    else:
-        ohlc = make_illustrative_ohlc(price)
-        st.info(
-            "No usable OHLC rows were found for this company. Showing a clearly labelled "
-            "deterministic illustrative path anchored to the dataset's current price."
+        st.warning(schema_error + " Trying Yahoo Finance, then the bundled real snapshot.")
+    if not live_ohlc.empty:
+        ohlc = live_ohlc
+        source_label = f"Yahoo Finance ({ticker})"
+        st.success(
+            f"Using cached Yahoo Finance data for `{ticker}` ({len(ohlc):,} rows). "
+            f"Retrieved {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}."
         )
+    elif not snapshot_ohlc.empty:
+        ohlc = snapshot_ohlc
+        source_label = f"Bundled real snapshot ({ticker or 'mapped symbol unavailable'})"
+        st.warning(
+            f"Yahoo Finance data was unavailable. Using the bundled real snapshot from "
+            f"`{ohlc_path}` ({len(ohlc):,} rows); coverage ends {ohlc['Date'].max().date()}."
+        )
+    else:
+        ohlc = pd.DataFrame()
+        source_label = "No real OHLC data"
+        st.info(
+            "No real OHLC rows are available for this company. Add a valid OHLC CSV or "
+            "restore network access; no synthetic price path is shown in v3."
+        )
+    if ohlc.empty:
+        st.stop()
+    st.caption(
+        f"Data source: {source_label}. Historical observations are not forecasts or investment advice."
+    )
     if len(ohlc) > 1:
         min_date = ohlc["Date"].min().date()
         max_date = ohlc["Date"].max().date()
@@ -401,10 +451,22 @@ with tab_price:
         figure.update_yaxes(title_text="Volume", row=2, col=1)
     figure.update_yaxes(title_text="Price (₹)", row=1, col=1)
     figure.update_layout(
-        title=f"{'Historical' if not real_ohlc.empty else 'Illustrative'} OHLC path — {company}",
+        title=f"Historical OHLC path — {company}",
         xaxis_title="Business date",
-        xaxis_rangeslider_visible=False,
+        xaxis_rangeslider_visible=True,
         height=650 if has_volume else 520,
+    )
+    figure.update_xaxes(
+        rangeselector={
+            "buttons": [
+                {"count": 1, "label": "1m", "step": "month", "stepmode": "backward"},
+                {"count": 3, "label": "3m", "step": "month", "stepmode": "backward"},
+                {"count": 6, "label": "6m", "step": "month", "stepmode": "backward"},
+                {"step": "all", "label": "All"},
+            ]
+        },
+        row=1,
+        col=1,
     )
     st.plotly_chart(figure, use_container_width=True)
     st.download_button(

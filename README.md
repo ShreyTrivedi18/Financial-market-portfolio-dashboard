@@ -53,8 +53,22 @@ Use the included `data/ohlc_template.csv` as a starting point. The required colu
 3. Streamlit Cloud installs the pinned dependency families from `requirements.txt`. In the deployed app, use repository-relative paths such as `data/financials` and `data/ohlc.csv`, or provide another accessible path in the sidebar.
 4. If the full financial archive is too large for GitHub, upload a smaller academic sample under `data/financials` or connect the app to an external storage workflow. The app will start with a clear error rather than modifying or copying source data.
 
-The repository includes a small synthetic sample under `data/financials` so the deployed app renders immediately. It is not a copy of the supplied archive and contains no private data. Relative defaults are resolved from the directory containing `app.py`/`data_loader.py`, not Streamlit's process working directory, so deployment works even when the platform launches the app from another directory. On the original local machine it automatically falls back to the supplied absolute full archive when the repository sample is absent or when you enter that path in the sidebar.
+The repository includes a reduced subset of identifiable companies from the supplied archive so the deployed app renders immediately without exposing the full archive or private attachments: 3M India Ltd, ABB India Ltd, ACC Ltd, AAVAS Financiers Ltd, and 5Paisa Capital Ltd. Relative defaults are resolved from the directory containing `app.py`/`data_loader.py`, not Streamlit's process working directory. On the original local machine it automatically falls back to the supplied absolute full archive when the repository subset is absent or when you enter that path in the sidebar.
+
+## V3 market-data provenance
+
+The mapped NSE tickers are:
+
+| Company | Yahoo Finance symbol |
+| --- | --- |
+| 3M India Ltd | `3MINDIA.NS` |
+| ABB India Ltd | `ABB.NS` |
+| ACC Ltd | `ACC.NS` |
+| AAVAS Financiers Ltd | `AAVAS.NS` |
+| 5Paisa Capital Ltd | `5PAISA.NS` |
+
+The Price/OHLC tab attempts a cached `yfinance` download using these `.NS` symbols. It displays the retrieval time and source. If Yahoo Finance is unavailable, it loads `data/ohlc.csv`, a dated real Yahoo Finance snapshot committed for reproducible deployment. If neither source has rows, the app displays an explicit no-data message; v3 does not generate synthetic prices. Yahoo Finance availability, licensing, delayed quotes, corporate actions, and data completeness may vary. This dashboard is descriptive and is not investment advice.
 
 ## V2 interpretation notes
 
-The richer visuals remain descriptive: the treemap uses dataset market-cap fields as area, the valuation/profitability scatter places Stock P/E against ROE, and the equal-weight portfolio is an arithmetic illustration. The OHLC moving averages are rolling summaries of whichever rows are loaded; they are not forecasts. Synthetic sample values and the illustrative fallback are labeled in the UI and should not be interpreted as observed market performance.
+The richer visuals remain descriptive: the treemap uses dataset market-cap fields as area, the valuation/profitability scatter places Stock P/E against ROE, and the equal-weight portfolio is an arithmetic illustration. The OHLC moving averages are rolling summaries of whichever rows are loaded; they are not forecasts. The reduced real-company sample and dated snapshot should not be interpreted as a live, complete market feed.
