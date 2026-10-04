@@ -79,11 +79,14 @@ The app derives a metric only when all required archive inputs are finite and
 non-zero: profit margin = `Net Profit / Sales × 100`; debt/equity =
 `Borrowings / (Equity Capital + Reserves)`. It does not derive market prices,
 market capitalization, P/E, growth, or dividends. A coverage count is informational,
-not a quality score: the supplied reduced repository archive currently contains five
-company folders, while the curated map contains 31 real companies. The remaining
-mapped companies therefore legitimately show unavailable fundamentals until a
-matching supplied archive is provided. Yahoo availability, delayed quotes, corporate
-actions, and archive period differences remain limitations.
+not a quality score: the supplied archive exposes 52 usable company folders, of
+which 5 have normalized name matches to the 31-company public map. Those 5 folders
+(3M India, 5Paisa Capital, AAVAS Financiers, ABB India, and ACC) are bundled as the
+reduced repository fundamentals subset with their usable basic-info, ratios,
+profit/loss, and balance-sheet files. The other 26 mapped companies remain in the
+price/OHLC universe and show explicit `Unavailable` / `0/12 metrics` coverage until
+a matching supplied archive is provided. Yahoo availability, delayed quotes,
+corporate actions, and archive period differences remain limitations.
 
 The curated mapping in `data/real_universe.csv` contains these 31 real Indian NSE companies and Yahoo Finance symbols:
 

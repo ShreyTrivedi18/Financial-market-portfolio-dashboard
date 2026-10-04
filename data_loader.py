@@ -28,6 +28,15 @@ DEFAULT_COMPANY_LIST = APP_DIR / "data" / "company_list.csv"
 DEFAULT_OHLC_PATH = APP_DIR / "data" / "ohlc.csv"
 DEFAULT_REAL_UNIVERSE = APP_DIR / "data" / "real_universe.csv"
 OHLC_REQUIRED_COLUMNS = ("Date", "Open", "High", "Low", "Close")
+FUNDAMENTAL_COVERAGE_FIELDS = (
+    "Market Cap", "Current Price", "Stock P/E", "ROE", "ROCE", "Sales growth",
+    "Profit growth", "Dividend Yield", "Debt", "Debt / equity", "Profit margin",
+    "Price to Sales",
+)
+FUNDAMENTAL_FILES = (
+    "*_Basic_Info.csv", "Ratios.csv", "Yearly_Profit_Loss.csv",
+    "Yearly_Balance_Sheet.csv",
+)
 REAL_TICKER_MAP = {
     "3M India Ltd": "3MINDIA.NS",
     "ABB India Ltd": "ABB.NS",
@@ -244,6 +253,10 @@ def _archive_fundamentals(company: str, data_root: str | Path) -> dict[str, obje
     if pd.notna(net_profit) and pd.notna(sales) and sales != 0:
         result["Profit margin"] = net_profit / sales * 100
     result["Profit margin"] = result.get("Profit margin", np.nan)
+    result["Fundamentals files"] = sum(
+        bool(list((resolve_company_root(data_root) / company).glob(pattern)))
+        for pattern in FUNDAMENTAL_FILES
+    )
     return result
 
 
@@ -268,10 +281,6 @@ def load_real_universe(
         frame[column] = frame[column].map(_clean_number)
     frame["BSE"] = frame.get("BSE", "—")
     archive_records = _archive_records(data_root)
-    coverage_fields = [
-        "Market Cap", "Current Price", "Stock P/E", "ROE", "ROCE", "Sales growth",
-        "Profit growth", "Dividend Yield", "Debt", "Debt / equity", "Profit margin",
-    ]
     for index, row in frame.iterrows():
         archive = _archive_fundamentals(row["Company"], data_root)
         if archive:
@@ -281,15 +290,23 @@ def load_real_universe(
                 if pd.notna(value):
                     frame.at[index, field] = _clean_number(value)
     frame["Fundamentals source"] = frame["Company"].map(
-        lambda company: "Supplied archive" if _metric_key(company) in archive_records else "Not available"
+        lambda company: "Supplied archive" if _metric_key(company) in archive_records else "Unavailable"
     )
     frame["Fundamentals coverage"] = frame.apply(
-        lambda row: f"{sum(pd.notna(row.get(field, np.nan)) for field in coverage_fields)}/{len(coverage_fields)} metrics",
+        lambda row: f"{sum(pd.notna(row.get(field, np.nan)) for field in FUNDAMENTAL_COVERAGE_FIELDS)}/{len(FUNDAMENTAL_COVERAGE_FIELDS)} metrics",
         axis=1,
     )
-    frame["Fundamentals freshness"] = frame["Fundamentals source"].map(
-        lambda source: "Archive export (periods shown in statements)" if source == "Supplied archive" else "No supplied archive match"
+    frame["Fundamentals coverage count"] = frame.apply(
+        lambda row: sum(pd.notna(row.get(field, np.nan)) for field in FUNDAMENTAL_COVERAGE_FIELDS),
+        axis=1,
     )
+    if "Fundamentals files" not in frame:
+        frame["Fundamentals files"] = 0
+    frame["Fundamentals files"] = frame["Fundamentals files"].fillna(0).astype(int)
+    frame["Fundamentals freshness"] = frame["Fundamentals source"].map(
+        lambda source: "Archive export (periods shown in statements)" if source == "Supplied archive" else "No normalized archive match"
+    )
+    frame["Price source"] = "Yahoo Finance (.NS); bundled real snapshot fallback"
     return frame.sort_values("Company").reset_index(drop=True)
 
 

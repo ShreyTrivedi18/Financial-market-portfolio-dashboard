@@ -219,6 +219,12 @@ with tab_overview:
     if filtered.empty:
         st.warning("No companies match the current filters.")
     else:
+        archive_matches = int((universe["Fundamentals source"] == "Supplied archive").sum())
+        st.caption(
+            f"Two-tier sources: prices use Yahoo Finance with the bundled snapshot fallback; "
+            f"fundamentals use the supplied archive. Archive fundamentals matched for "
+            f"{archive_matches}/{len(universe)} mapped companies."
+        )
         sector_counts = filtered["Sector"].value_counts().reset_index()
         sector_counts.columns = ["Sector", "Companies"]
         left, right = st.columns(2)
@@ -256,7 +262,11 @@ with tab_overview:
                 ),
                 use_container_width=True,
             )
-        display_cols = ["Company", "Sector", "NSE", "BSE", "Market Cap", "Current Price", "ROE", "ROCE"]
+        display_cols = [
+            "Company", "Sector", "NSE", "BSE", "Yahoo Symbol", "Market Cap",
+            "Current Price", "ROE", "ROCE", "Fundamentals source",
+            "Fundamentals coverage", "Fundamentals files",
+        ]
         overview_table = filtered[[c for c in display_cols if c in filtered.columns]].head(100)
         st.dataframe(overview_table, use_container_width=True, hide_index=True)
         st.download_button(
@@ -301,9 +311,11 @@ with tab_overview:
         st.info(
             f"Fundamentals coverage: {available_count}/12 profile metrics. "
             f"Source: {profile.get('Fundamentals source', 'Not available')}. "
+            f"Files: {profile.get('Fundamentals files', 0)}/4 expected. "
             f"{profile.get('Fundamentals freshness', '')}"
         )
         st.caption(
+            f"Price source: Yahoo Finance ({profile.get('Yahoo Symbol', '—')}) with bundled snapshot fallback · "
             f"Sector: {profile.get('Sector', 'Unknown')} · profile values are descriptive "
             "dataset fields, not recommendations."
         )
@@ -399,8 +411,14 @@ with tab_health:
     st.caption(
         f"Fundamentals source: {health_profile.get('Fundamentals source', 'Not available')} · "
         f"coverage: {health_profile.get('Fundamentals coverage', '0/0 metrics')} · "
+        f"files: {health_profile.get('Fundamentals files', 0)}/4 expected · "
         f"{health_profile.get('Fundamentals freshness', '')}"
     )
+    if ratios.empty and profit_loss.empty and balance.empty:
+        st.info(
+            "No supplied-archive fundamentals are available for this company. "
+            "Price/OHLC data remains available independently from Yahoo Finance or the bundled snapshot."
+        )
     c1, c2 = st.columns(2)
     with c1:
         ratio_chart = chart_rows(
