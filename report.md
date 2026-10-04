@@ -18,7 +18,7 @@ The Financial Market & Stock Portfolio Tracker is an interactive Streamlit dashb
 
 The system combines a Python data-loading layer with a Plotly-based Streamlit interface. The loader discovers company folders, reads basic information, reshapes wide statements into tidy metric-period-value tables, validates optional historical OHLC data, and provides explicit handling for missing files. The interface contains five views: Market overview, Portfolio allocation, Company comparison, Financial health, and Price/OHLC. Filters for sector, company name, and minimum market capitalization connect the views to a common filtered universe.
 
-For deployment safety, the public application contains a curated universe of identifiable NSE companies mapped to Yahoo Finance `.NS` symbols, including 3M India, ABB India, ACC, AAVAS Financiers, 5Paisa, Reliance Industries, Infosys, TCS, ICICI Bank, and other liquid names. Only a reduced fundamentals subset is published; the full archive and private attachment CSV remain excluded. The OHLC view attempts cached Yahoo Finance history and falls back to a dated real snapshot when network retrieval is unavailable. Findings in this report therefore describe interface behavior and available data, not investment conclusions.
+For deployment safety, the public application contains a curated universe of 31 identifiable NSE companies mapped to Yahoo Finance `.NS` symbols, including 3M India, ABB India, ACC, AAVAS Financiers, 5Paisa, Reliance Industries, Infosys, TCS, ICICI Bank, and other listed names. Only a reduced fundamentals subset is published; the full archive and private attachment CSV remain excluded. The OHLC view attempts on-demand Yahoo Finance history through `yfinance`, cached for 15 minutes, and falls back to a dated real snapshot when network retrieval is unavailable. Findings in this report therefore describe interface behavior and available data, not investment conclusions.
 
 **Keywords:** financial visualization, Streamlit, Plotly, portfolio allocation, OHLC, data normalization, exploratory analytics
 
@@ -90,7 +90,7 @@ Streamlit Community Cloud cannot access a developer’s `D:\` drive. The reposit
 | AAVAS Financiers Ltd | `AAVAS.NS` | Yes | Yes | Yes | Yes |
 | 5Paisa Capital Ltd | `5PAISA.NS` | Yes | Yes | Yes | Yes |
 
-The mapped names are real listed Indian companies. The curated universe is intentionally small and is not statistically representative of the Indian equity market. Fundamentals are shown only where the reduced archive subset contains the relevant company files; unavailable metrics are left unavailable.
+The mapped names are real listed Indian companies. The curated universe contains 31 mappings, is intentionally limited, and is not statistically representative of the Indian equity market. Fundamentals are shown only where the reduced archive subset contains the relevant company files; unavailable metrics are left unavailable.
 
 The repository also contains `data/ohlc.csv`, a dated Yahoo Finance snapshot with `Date`, `Company`, `Symbol`, `Open`, `High`, `Low`, `Close`, and `Volume`. The loader checks date parsing, numeric conversion, and the logical high/low bounds before a row is plotted.
 
@@ -98,10 +98,10 @@ The repository also contains `data/ohlc.csv`, a dated Yahoo Finance snapshot wit
 
 `data_loader.py` separates source handling from presentation:
 
-1. `load_company_universe()` discovers basic-info files and returns one normalized row per company.
+1. `load_real_universe()` loads the repository-contained 31-company mapping used by the public dashboard. The legacy `load_company_universe()` path remains available for local archive discovery.
 2. `load_company_table()` reshapes wide statements into `metric`, `period`, and `value` columns.
 3. `load_ohlc_csv()` validates and filters a long-format OHLC file, including optional company filtering.
-4. `load_yfinance_ohlc()` retrieves cached, on-demand Yahoo Finance history for the selected `.NS` ticker; the dated bundled snapshot is used when network retrieval fails.
+4. `load_yfinance_ohlc()` retrieves on-demand Yahoo Finance history for the selected `.NS` ticker; the Streamlit wrapper caches the result for 15 minutes, and the dated bundled snapshot is used when network retrieval fails.
 5. Relative paths are resolved from the directory containing `data_loader.py`, rather than from the process working directory. This makes the default `data/financials` path reliable on Streamlit Cloud.
 
 Malformed or missing files produce empty views and user-facing messages instead of modifying source data or silently presenting an invalid success state.
@@ -182,6 +182,8 @@ Optional fields: `Company`, `Symbol`, `Ticker`, and `Volume`.
 
 The bundled snapshot contains dated OHLC rows for the curated NSE symbols and therefore exercises the real-data path. The app first attempts cached Yahoo Finance history, then filters the bundled snapshot or an external local file to the selected company. If no usable rows are found, it shows an explicit no-data message and does not invent a price path.
 
+The Plotly view supports hover details, legend toggles, zoom/pan, date filtering, range buttons, a range slider, 3/5-period moving averages, and volume when present. Relevant filtered/company tables and displayed OHLC rows can be downloaded as CSV. The captured snapshot has rows for 30 symbols; Tata Motors (`TATAMOTORS.NS`) had no rows and may show no data when live retrieval also fails.
+
 **Figure slot E — Price/OHLC**  
 `report_assets/05_price_ohlc.png`  
 *Insert a screenshot showing the Yahoo Finance or bundled real-snapshot source message and candlestick chart for one mapped NSE company. If the network is unavailable, retain the dated-snapshot warning in the caption.*
@@ -194,8 +196,8 @@ The bundled snapshot contains dated OHLC rows for the curated NSE symbols and th
 
 The repository sample produces a usable initial dashboard state:
 
-- **4 company records** load from `data/financials`.
-- **30 mapped real NSE companies** are available in the curated universe, subject to the sidebar company limit.
+- **5 company records** load from the reduced archive-derived `data/financials` subset.
+- **31 mapped real NSE companies** are available in the curated universe; the default sidebar display limit is 30.
 - The default equal-weight portfolio can allocate the illustrative ₹100,000 across the filtered sample.
 - Statement files load into tidy metric-period-value tables for the selected company.
 - The bundled OHLC snapshot contains one year of validated rows for 30 mapped tickers except any Yahoo symbol with no returned rows.
@@ -234,10 +236,10 @@ For local full-archive exploration, enter the supplied archive path in the sideb
 
 ## 7. Limitations and Ethical Considerations
 
-1. **Curated public sample:** The deployed 30-company mapping is real but intentionally limited. It cannot support claims about market-wide sector leadership, diversification quality, or investment performance.
+1. **Curated public sample:** The deployed 31-company mapping is real but intentionally limited. It cannot support claims about market-wide sector leadership, diversification quality, or investment performance.
 2. **Local archive boundary:** The supplied local archive is external to the repository and may contain a broader or different set of records than the sample. The report does not claim that the public sample represents the full archive.
-3. **Point-in-time values:** Basic-info fields such as price and market capitalization are not guaranteed to be current. No live market feed is integrated.
-4. **OHLC coverage:** Yahoo Finance availability, delays, corporate actions, and completeness can vary. The bundled snapshot is dated and is not a live feed; if both sources fail, no chart is shown.
+3. **Yahoo Finance dependency:** The app attempts on-demand Yahoo Finance history through `yfinance`, cached for 15 minutes. Basic-info fields such as price and market capitalization are not guaranteed to be current, and Yahoo Finance may be delayed, incomplete, or unavailable.
+4. **OHLC coverage:** The bundled snapshot contains rows for 30 symbols; Tata Motors (`TATAMOTORS.NS`) had no rows in the captured snapshot. Yahoo Finance availability, delays, corporate actions, and completeness can vary. If both sources fail, no chart is shown.
 5. **Equal-weight allocation:** The portfolio tab uses an arbitrary equal-weight convention and does not model risk, costs, liquidity, taxes, rebalancing, or investor suitability.
 6. **Accounting comparability:** Ratios and statement labels can vary by company, sector, period, and source convention. The app exposes values but does not harmonize every accounting definition.
 7. **Missingness:** A missing file or malformed row can reduce the available visual evidence. The app reports empty views, but users should inspect data quality before drawing conclusions.
@@ -252,7 +254,7 @@ These limitations are appropriate for an academic visualization prototype. A pro
 
 The Financial Market & Stock Portfolio Tracker demonstrates how a messy collection of company-level CSV exports can be turned into a maintainable exploratory dashboard. The central contribution is not a trading strategy; it is a reproducible interface that links normalized data loading, filtering, comparison, allocation arithmetic, financial-health visuals, and validated OHLC display.
 
-The curated real-company cloud universe ensures that the public application opens with meaningful content while protecting the original archive and private attachment. The local path fallback preserves a route for deeper academic exploration when the full archive is available. Source/timestamp labels and no-data behavior avoid implying that a live market feed is always available.
+The curated real-company cloud universe ensures that the public application opens with meaningful content while protecting the original archive and private attachment. The local path fallback preserves a route for deeper academic exploration when the full archive is available. Source/timestamp labels, cache behavior, and no-data handling distinguish on-demand Yahoo Finance history from the dated bundled snapshot without implying guaranteed live coverage.
 
 Future academic extensions could add a documented real historical data source, sector-specific normalization, return and volatility calculations, date-range controls, downloadable filtered tables, automated data-quality tests, and a formal evaluation with student users. Those extensions should preserve the current principle: descriptive analytics must be clearly separated from investment advice.
 
