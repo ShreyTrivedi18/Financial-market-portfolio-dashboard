@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 from data_loader import (
@@ -50,6 +51,22 @@ def money(value: object) -> str:
 def metric_value(universe: pd.DataFrame, company: str, field: str) -> float:
     rows = universe.loc[universe["Company"] == company, field]
     return float(rows.iloc[0]) if not rows.empty and pd.notna(rows.iloc[0]) else np.nan
+
+
+def metric_text(value: object, suffix: str = "", decimals: int = 1) -> str:
+    if pd.isna(value):
+        return "—"
+    return f"{float(value):,.{decimals}f}{suffix}"
+
+
+def company_value(universe: pd.DataFrame, company: str, field: str) -> object:
+    rows = universe.loc[universe["Company"] == company, field]
+    return rows.iloc[0] if not rows.empty else np.nan
+
+
+def latest_metric(table: pd.DataFrame, metric: str) -> float:
+    values = table.loc[table["metric"].eq(metric), "value"].dropna()
+    return float(values.iloc[-1]) if not values.empty else np.nan
 
 
 def plot_statement(table: pd.DataFrame, metrics: list[str], title: str) -> None:
@@ -150,11 +167,55 @@ with tab_overview:
                                    title="Companies by sector"), use_container_width=True)
         with right:
             st.plotly_chart(px.scatter(filtered, x="Market Cap", y="ROE", hover_name="Company",
-                                       color="Sector", title="Market cap vs ROE"),
+                                       color="Sector", size="Current Price",
+                                       title="Market cap vs ROE (descriptive only)"),
                             use_container_width=True)
+        st.plotly_chart(
+            px.treemap(
+                filtered.dropna(subset=["Market Cap"]),
+                path=["Sector", "Company"],
+                values="Market Cap",
+                color="ROE",
+                color_continuous_scale="RdYlGn",
+                title="Sector market-cap composition (dataset units)",
+            ),
+            use_container_width=True,
+        )
         display_cols = ["Company", "Sector", "NSE", "BSE", "Market Cap", "Current Price", "ROE", "ROCE"]
-        st.dataframe(filtered[[c for c in display_cols if c in filtered.columns]].head(100),
-                     use_container_width=True, hide_index=True)
+        overview_table = filtered[[c for c in display_cols if c in filtered.columns]].head(100)
+        st.dataframe(overview_table, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download filtered companies (CSV)",
+            overview_table.to_csv(index=False).encode("utf-8"),
+            "filtered_companies.csv",
+            "text/csv",
+        )
+        st.markdown("#### Company profile")
+        profile_company = st.selectbox(
+            "Select a company for key metrics", filtered["Company"].tolist(), key="profile_company"
+        )
+        profile = filtered.loc[filtered["Company"].eq(profile_company)].iloc[0]
+        profile_cols = st.columns(4)
+        profile_metrics = [
+            ("Current price", money(profile.get("Current Price", np.nan))),
+            ("Market cap", money(profile.get("Market Cap", np.nan))),
+            ("Stock P/E", metric_text(profile.get("Stock P/E", np.nan), "x")),
+            ("Price / sales", metric_text(profile.get("Price to Sales", np.nan), "x")),
+            ("ROE", metric_text(profile.get("ROE", np.nan), "%")),
+            ("ROCE", metric_text(profile.get("ROCE", np.nan), "%")),
+            ("Sales growth", metric_text(profile.get("Sales growth", np.nan), "%")),
+            ("Profit growth", metric_text(profile.get("Profit growth", np.nan), "%")),
+            ("Debt", money(profile.get("Debt", np.nan))),
+            ("Dividend yield", metric_text(profile.get("Dividend Yield", np.nan), "%")),
+            ("NSE", str(profile.get("NSE", "—"))),
+            ("BSE", str(profile.get("BSE", "—"))),
+        ]
+        for index, (label, value) in enumerate(profile_metrics):
+            profile_cols[index % 4].metric(label, value)
+        st.caption(
+            f"Sector: {profile.get('Sector', 'Unknown')} · profile values are descriptive "
+            "dataset fields, not recommendations."
+        )
 
 with tab_portfolio:
     st.subheader("Illustrative equal-weight portfolio")
@@ -176,6 +237,12 @@ with tab_portfolio:
                             use_container_width=True)
         st.dataframe(portfolio[["Company", "Sector", "Weight", "Illustrative allocation"]],
                      use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download illustrative portfolio (CSV)",
+            portfolio[["Company", "Sector", "Weight", "Illustrative allocation"]].to_csv(index=False).encode("utf-8"),
+            "illustrative_portfolio.csv",
+            "text/csv",
+        )
 
 with tab_compare:
     st.subheader("Compare companies")
@@ -188,8 +255,29 @@ with tab_compare:
         st.plotly_chart(px.bar(compare.sort_values(metric), x=metric, y="Company", color="Sector",
                                orientation="h", title=f"{metric} comparison"),
                         use_container_width=True)
+        st.plotly_chart(
+            px.scatter(
+                compare,
+                x="Stock P/E",
+                y="ROE",
+                size="Market Cap",
+                color="Sector",
+                hover_name="Company",
+                title="Valuation versus profitability (descriptive only)",
+                labels={"Stock P/E": "Stock P/E (x)", "ROE": "ROE (%)"},
+            ),
+            use_container_width=True,
+        )
         st.dataframe(compare[["Company", "Sector"] + [m for m in metric_options if m in compare.columns]],
                      use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download comparison (CSV)",
+            compare[["Company", "Sector"] + [m for m in metric_options if m in compare.columns]]
+            .to_csv(index=False)
+            .encode("utf-8"),
+            "company_comparison.csv",
+            "text/csv",
+        )
     else:
         st.info("Select at least one company.")
 
@@ -199,6 +287,11 @@ with tab_health:
     ratios = cached_table(company, data_root, "Ratios.csv")
     profit_loss = cached_table(company, data_root, "Yearly_Profit_Loss.csv")
     balance = cached_table(company, data_root, "Yearly_Balance_Sheet.csv")
+    health_cards = st.columns(4)
+    health_cards[0].metric("Latest ROE", metric_text(latest_metric(ratios, "ROE"), "%"))
+    health_cards[1].metric("Latest ROCE", metric_text(latest_metric(ratios, "ROCE"), "%"))
+    health_cards[2].metric("Current ratio", metric_text(latest_metric(ratios, "Current Ratio"), "x"))
+    health_cards[3].metric("Debt / equity", metric_text(latest_metric(ratios, "Debt / equity"), "x"))
     c1, c2 = st.columns(2)
     with c1:
         st.plotly_chart(px.bar(ratios[ratios["metric"].isin(["Current Ratio", "Debt / equity", "ROE", "ROCE"])],
@@ -207,8 +300,40 @@ with tab_health:
                         use_container_width=True)
     with c2:
         plot_statement(profit_loss, ["Sales", "Operating Profit", "Net Profit"], "Profit and loss trend")
+    debt_profit = pd.concat(
+        [
+            balance[balance["metric"].eq("Borrowings")].assign(source="Borrowings"),
+            profit_loss[profit_loss["metric"].eq("Net Profit")].assign(source="Net Profit"),
+        ],
+        ignore_index=True,
+    )
+    if not debt_profit.empty:
+        st.plotly_chart(
+            px.bar(
+                debt_profit,
+                x="period",
+                y="value",
+                color="source",
+                barmode="group",
+                title="Borrowings and net profit (statement units)",
+            ),
+            use_container_width=True,
+        )
     plot_statement(balance, ["Borrowings", "Cash & Bank", "Total Assets", "Total Liabilities"],
                    "Balance-sheet trend")
+    st.download_button(
+        "Download selected financial tables (CSV)",
+        pd.concat(
+            [
+                ratios.assign(statement="Ratios"),
+                profit_loss.assign(statement="Yearly_Profit_Loss"),
+                balance.assign(statement="Yearly_Balance_Sheet"),
+            ],
+            ignore_index=True,
+        ).to_csv(index=False).encode("utf-8"),
+        "financial_health_tables.csv",
+        "text/csv",
+    )
 
 with tab_price:
     st.subheader("Price / OHLC view")
@@ -227,10 +352,66 @@ with tab_price:
             "No usable OHLC rows were found for this company. Showing a clearly labelled "
             "deterministic illustrative path anchored to the dataset's current price."
         )
-    figure = go.Figure(go.Candlestick(x=ohlc["Date"], open=ohlc["Open"], high=ohlc["High"],
-                                      low=ohlc["Low"], close=ohlc["Close"]))
-    figure.update_layout(title=f"Illustrative OHLC path — {company}", yaxis_title="Price (₹)",
-                         xaxis_title="Business date", xaxis_rangeslider_visible=False)
+    if len(ohlc) > 1:
+        min_date = ohlc["Date"].min().date()
+        max_date = ohlc["Date"].max().date()
+        date_range = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="ohlc_date_range",
+        )
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            ohlc = ohlc[
+                ohlc["Date"].dt.date.between(date_range[0], date_range[1])
+            ].copy()
+    for window in (3, 5):
+        ohlc[f"MA{window}"] = ohlc["Close"].rolling(window, min_periods=1).mean()
+    has_volume = "Volume" in ohlc.columns and ohlc["Volume"].notna().any()
+    rows = 2 if has_volume else 1
+    figure = make_subplots(
+        rows=rows,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.72, 0.28] if has_volume else [1],
+    )
+    figure.add_trace(
+        go.Candlestick(
+            x=ohlc["Date"], open=ohlc["Open"], high=ohlc["High"],
+            low=ohlc["Low"], close=ohlc["Close"], name="OHLC"
+        ),
+        row=1,
+        col=1,
+    )
+    for window, color in ((3, "#1f77b4"), (5, "#ff7f0e")):
+        figure.add_trace(
+            go.Scatter(x=ohlc["Date"], y=ohlc[f"MA{window}"], mode="lines",
+                       name=f"{window}-period MA", line={"color": color}),
+            row=1,
+            col=1,
+        )
+    if has_volume:
+        figure.add_trace(
+            go.Bar(x=ohlc["Date"], y=ohlc["Volume"], name="Volume", marker_color="#9aa5b1"),
+            row=2,
+            col=1,
+        )
+        figure.update_yaxes(title_text="Volume", row=2, col=1)
+    figure.update_yaxes(title_text="Price (₹)", row=1, col=1)
+    figure.update_layout(
+        title=f"{'Historical' if not real_ohlc.empty else 'Illustrative'} OHLC path — {company}",
+        xaxis_title="Business date",
+        xaxis_rangeslider_visible=False,
+        height=650 if has_volume else 520,
+    )
     st.plotly_chart(figure, use_container_width=True)
+    st.download_button(
+        "Download displayed OHLC data (CSV)",
+        ohlc.to_csv(index=False).encode("utf-8"),
+        f"{company.replace(' ', '_').lower()}_ohlc.csv",
+        "text/csv",
+    )
 
 st.caption(f"Loaded {len(universe):,} company records. Source files are read-only; no source data is copied or modified.")

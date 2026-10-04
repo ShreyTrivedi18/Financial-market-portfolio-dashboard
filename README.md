@@ -3,10 +3,12 @@
 An academic-project-friendly Streamlit dashboard for exploring the supplied NSE/BSE company financial exports. It provides:
 
 - Searchable and filterable market overview with sector and market-cap visuals.
+- Company profile cards, sector market-cap treemap, and descriptive valuation/profitability scatter views.
 - An illustrative equal-weight portfolio allocation view.
 - Company comparison across market-cap, valuation, growth, and return metrics.
-- Financial-health visuals from the supplied ratios, profit/loss, and balance-sheet exports.
-- A candlestick section that reads real historical OHLC rows when an OHLC CSV is supplied, with a clearly labeled deterministic illustrative fallback only when no usable rows are available.
+- Financial-health KPI cards and visuals from the supplied ratios, profit/loss, and balance-sheet exports.
+- A candlestick section with optional date filtering, 3/5-period moving averages, volume when available, and CSV download.
+- Downloadable filtered, comparison, portfolio, financial-health, and displayed OHLC tables.
 
 The app is descriptive and educational; it does not provide investment advice or recommendations.
 
@@ -52,3 +54,7 @@ Use the included `data/ohlc_template.csv` as a starting point. The required colu
 4. If the full financial archive is too large for GitHub, upload a smaller academic sample under `data/financials` or connect the app to an external storage workflow. The app will start with a clear error rather than modifying or copying source data.
 
 The repository includes a small synthetic sample under `data/financials` so the deployed app renders immediately. It is not a copy of the supplied archive and contains no private data. Relative defaults are resolved from the directory containing `app.py`/`data_loader.py`, not Streamlit's process working directory, so deployment works even when the platform launches the app from another directory. On the original local machine it automatically falls back to the supplied absolute full archive when the repository sample is absent or when you enter that path in the sidebar.
+
+## V2 interpretation notes
+
+The richer visuals remain descriptive: the treemap uses dataset market-cap fields as area, the valuation/profitability scatter places Stock P/E against ROE, and the equal-weight portfolio is an arithmetic illustration. The OHLC moving averages are rolling summaries of whichever rows are loaded; they are not forecasts. Synthetic sample values and the illustrative fallback are labeled in the UI and should not be interpreted as observed market performance.
